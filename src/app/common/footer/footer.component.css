@@ -1,0 +1,95 @@
+/* Footer Base */
+.footer {
+    background: #f8f9fa;
+    padding: 50px 0;
+    border-top: 1px solid #eaeaea;
+  }
+  
+  .footer-top .row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  
+  /* About Us (left side) */
+  .footer .single-footer {
+    width: 100%;
+  }
+  
+  .footer .single-footer h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #2c2d3f;
+    margin-bottom: 20px;
+  }
+  
+  .footer .single-footer p {
+    font-size: 0.95rem;
+    color: #555;
+    line-height: 1.6;
+  }
+  
+  /* Social Links */
+  .footer .social {
+    display: flex;
+    gap: 12px;
+    padding: 0;
+    margin: 15px 0 0;
+    list-style: none;
+  }
+  
+  .footer .social li a {
+    display: inline-block;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: #1a76d1;
+    color: #fff;
+    text-align: center;
+    line-height: 40px;
+    transition: background 0.3s ease;
+  }
+  
+  .footer .social li a:hover {
+    background: #155a9c;
+  }
+  
+  /* Contact Form (right side) */
+  .form-wrapper {
+    max-width: 100%;
+    margin-left: auto; /* Push to right */
+    text-align: right;
+  }
+  
+  .form-wrapper h2 {
+    text-align: right;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: #2c2d3f;
+    margin-bottom: 20px;
+  }
+  
+  .form-wrapper .visme_d {
+    width: 100% !important;
+    min-height: 650px !important;
+    display: block;
+    overflow: hidden;
+  }
+  
+  /* Responsive */
+  @media (max-width: 991px) {
+    .footer-top .row {
+      flex-direction: column;
+    }
+  
+    .form-wrapper {
+      text-align: left;
+      margin-left: 0;
+      margin-top: 40px;
+    }
+  
+    .form-wrapper h2 {
+      text-align: left;
+    }
+  }
+  

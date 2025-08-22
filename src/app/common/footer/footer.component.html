@@ -1,0 +1,44 @@
+<!-- Footer Area -->
+<footer id="footer" class="footer">
+    <!-- Footer Top -->
+    <div class="footer-top">
+      <div class="container">
+        <div class="row">
+          <!-- About Us -->
+          <div class="col-lg-4 col-md-12 col-12 mb-4 mb-lg-0">
+            <div class="single-footer">
+              <h2>About Us</h2>
+              <p>{{ aboutUs.description }}</p>
+              <!-- Social -->
+              <ul class="social">
+                <li *ngFor="let social of socialLinks">
+                  <a [href]="social.url" target="_blank"><i [class]="social.icon"></i></a>
+                </li>
+              </ul>
+              <!-- End Social -->
+            </div>
+          </div>
+  
+          <!-- Contact Form (Visme Embed) -->
+          <div class="col-lg-8 col-md-12 col-12">
+            <div class="single-footer">
+              <h2>Contact Us</h2>
+              <div
+                class="visme_d"
+                data-title="Contact Us Form"
+                data-url="koe78j47-contact-us-form"
+                data-domain="forms"
+                data-full-page="false"
+                data-min-height="650px"
+                data-form-id="142198"
+                style="min-height:650px; width:100%;"
+              ></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!--/ End Footer Top -->
+  </footer>
+  <!--/ End Footer Area -->
+  

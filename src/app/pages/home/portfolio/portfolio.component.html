@@ -1,0 +1,13 @@
+<section class="horizontal-section">
+    <div class="horizontal-scroll">
+      <div
+        class="image-card"
+        *ngFor="let item of portfolioItems"
+      >
+        <a [routerLink]="item.detailsLink">
+          <img [src]="item.imageUrl" alt="Portfolio Image" />
+        </a>
+      </div>
+    </div>
+  </section>
+  
