@@ -1,0 +1,864 @@
+1. appsettings.Development.json
+json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  }
+}
+2. appsettings.json
+json
+{
+  "MongoDB": {
+    "ConnectionString": "mongodb://localhost:27017",
+    "Database": "medical_reports_db"
+  },
+  "Gemini": {
+    "ApiKey": "AIzaSyDqGXx0YjHb5qbe6r_lfNzr05iFICEPKOk",
+    "ModelName": "models/gemini-1.5-flash"
+  },
+  "Configuration": {
+    "ServiceName": "report-service",
+    "ServiceHost": "localhost",
+    "ServicePort": 4006,
+    "ConsulAddress": "http://localhost:8500"
+  },
+  "ApiKey": "your-secure-api-key-here",
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "AllowedHosts": "*"
+}
+3. Program.cs
+csharp
+using Consul;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using ReportService.Models;
+using ReportService.Services;
+using ReportService.Middleware;
+using Microsoft.Extensions.Options;
+using MongoDB.Driver;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Configuration;
+
+var builder = WebApplication.CreateBuilder(args);
+
+// Add configuration
+builder.Configuration.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+builder.Configuration.AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: true);
+
+// Configure settings from appsettings.json
+builder.Services.Configure<GeminiSettings>(builder.Configuration.GetSection("Gemini"));
+builder.Services.Configure<MongoDBSettings>(builder.Configuration.GetSection("MongoDB"));
+
+// Register services
+builder.Services.AddSingleton<GeminiService>();
+builder.Services.AddSingleton<IMongoClient>(serviceProvider =>
+{
+    var settings = serviceProvider.GetRequiredService<IOptions<MongoDBSettings>>().Value;
+    return new MongoClient(settings.ConnectionString);
+});
+builder.Services.AddScoped<PatientAppointmentReportService>();
+
+// Register other services
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// Add CORS for development
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.AllowAnyOrigin()
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
+var app = builder.Build();
+
+// Enable CORS
+app.UseCors("AllowAll");
+
+// Enable Swagger middleware
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Report Service API V1");
+        c.RoutePrefix = "swagger";
+    });
+}
+
+// Middleware
+app.UseMiddleware<ApiKeyMiddleware>();
+
+app.UseRouting();
+app.UseAuthorization();
+app.MapControllers();
+
+// Health check endpoint for Consul
+app.MapGet("/health", () => Results.Ok(new { status = "Healthy", timestamp = DateTime.UtcNow }));
+
+// Root endpoint
+app.MapGet("/", () => Results.Content("Report Service is running and working properly"));
+
+// Consul service registration
+var config = app.Configuration.GetSection("Configuration");
+var consulAddress = config["ConsulAddress"];
+
+if (!string.IsNullOrEmpty(consulAddress))
+{
+    try
+    {
+        var consulClient = new ConsulClient(c => c.Address = new Uri(consulAddress));
+        var lifetime = app.Lifetime;
+
+        var serviceId = $"{config["ServiceName"]}-{Guid.NewGuid()}";
+
+        var registration = new AgentServiceRegistration()
+        {
+            ID = serviceId,
+            Name = config["ServiceName"],
+            Address = config["ServiceHost"],
+            Port = int.Parse(config["ServicePort"]),
+            Tags = new[] { "report", "http", "medical", "api" },
+            Check = new AgentServiceCheck()
+            {
+                HTTP = $"http://{config["ServiceHost"]}:{config["ServicePort"]}/health",
+                Interval = TimeSpan.FromSeconds(30),
+                Timeout = TimeSpan.FromSeconds(10),
+                DeregisterCriticalServiceAfter = TimeSpan.FromMinutes(1)
+            }
+        };
+
+        // Register with Consul
+        await consulClient.Agent.ServiceRegister(registration);
+        Console.WriteLine($"Service registered with Consul: {config["ServiceName"]}");
+
+        // Deregister on shutdown
+        lifetime.ApplicationStopping.Register(() =>
+        {
+            consulClient.Agent.ServiceDeregister(serviceId).Wait();
+            Console.WriteLine($"Service deregistered from Consul: {config["ServiceName"]}");
+        });
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Consul registration failed: {ex.Message}");
+    }
+}
+else
+{
+    Console.WriteLine("Consul address not configured, skipping service registration");
+}
+
+// Database initialization
+await InitializeDatabaseAsync(app.Services);
+
+app.Run();
+
+async Task InitializeDatabaseAsync(IServiceProvider services)
+{
+    using var scope = services.CreateScope();
+    try
+    {
+        var mongoSettings = scope.ServiceProvider.GetRequiredService<IOptions<MongoDBSettings>>().Value;
+        var mongoClient = scope.ServiceProvider.GetRequiredService<IMongoClient>();
+        var database = mongoClient.GetDatabase(mongoSettings.Database);
+
+        // Create indexes
+        var reportsCollection = database.GetCollection<PatientAppointmentReport>("reports");
+        
+        // Create index on PatientId for faster queries
+        var patientIdIndex = Builders<PatientAppointmentReport>.IndexKeys.Ascending(r => r.PatientId);
+        await reportsCollection.Indexes.CreateOneAsync(new CreateIndexModel<PatientAppointmentReport>(patientIdIndex));
+        
+        // Create index on AppointmentDate for date-based queries
+        var appointmentDateIndex = Builders<PatientAppointmentReport>.IndexKeys.Descending(r => r.AppointmentDate);
+        await reportsCollection.Indexes.CreateOneAsync(new CreateIndexModel<PatientAppointmentReport>(appointmentDateIndex));
+
+        Console.WriteLine("Database initialized successfully");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Database initialization failed: {ex.Message}");
+    }
+}
+4. Controllers/ReportController.cs
+csharp
+using Microsoft.AspNetCore.Mvc;
+using ReportService.Models;
+using ReportService.Services;
+
+namespace ReportService.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class ReportController : ControllerBase
+    {
+        private readonly PatientAppointmentReportService _reportService;
+        private readonly GeminiService _geminiService;
+
+        public ReportController(PatientAppointmentReportService reportService, GeminiService geminiService)
+        {
+            _reportService = reportService;
+            _geminiService = geminiService;
+        }
+
+        [HttpPost]
+        public async Task<IActionResult> CreateReport([FromBody] DoctorReportInput input)
+        {
+            try
+            {
+                // In production, get doctor info from JWT token or user context
+                var doctorName = "Dr. Jane Smith";
+                var doctorSpecialization = "Cardiology";
+                var doctorId = 456;
+
+                var report = await _reportService.CreateReportFromDoctorInput(input, doctorName, doctorSpecialization, doctorId);
+                
+                return Ok(new { 
+                    Success = true, 
+                    ReportId = report.Id, 
+                    Message = "Report created successfully" 
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpPost("{reportId}/generate-comprehensive")]
+        public async Task<IActionResult> GenerateComprehensiveReport(string reportId)
+        {
+            try
+            {
+                var report = await _reportService.GetReportById(reportId);
+                if (report == null)
+                {
+                    return NotFound(new { Success = false, Message = "Report not found" });
+                }
+
+                var reportContext = $@"
+MEDICAL REPORT - COMPREHENSIVE ANALYSIS
+
+PATIENT INFORMATION:
+Name: {report.PatientName}
+DOB: {report.PatientDOB:yyyy-MM-dd}
+Gender: {report.Gender}
+Appointment Date: {report.AppointmentDate:yyyy-MM-dd}
+
+VITAL SIGNS:
+Blood Pressure: {report.BloodPressure}
+Heart Rate: {report.HeartRate}
+Temperature: {report.Temperature}
+Respiratory Rate: {report.RespiratoryRate}
+Oxygen Saturation: {report.OxygenSaturation}
+
+CHIEF COMPLAINT:
+{report.ChiefComplaint}
+
+HISTORY OF PRESENT ILLNESS:
+{report.HistoryOfPresentIllness}
+
+PHYSICAL EXAMINATION FINDINGS:
+{report.PhysicalExamination}
+
+LABORATORY FINDINGS:
+{report.LaboratoryFindings}
+
+IMAGING RESULTS:
+{report.ImagingResults}
+
+DIAGNOSIS:
+{report.Diagnosis}
+
+TREATMENT PLAN:
+{report.TreatmentPlan}
+
+PRESCRIPTIONS:
+{report.Prescriptions}
+Dosage Instructions: {report.DosageInstructions}
+
+FOLLOW-UP INSTRUCTIONS:
+{report.FollowUpInstructions}
+
+ADDITIONAL NOTES:
+{report.AdditionalNotes}
+
+ATTENDING PHYSICIAN:
+{report.DoctorName} - {report.DoctorSpecialization}
+";
+
+                var prompt = $@"
+ANALYZE THIS MEDICAL REPORT AND GENERATE A COMPREHENSIVE, PROFESSIONAL MEDICAL SUMMARY:
+
+REQUIREMENTS:
+1. Provide a detailed clinical summary in professional medical language
+2. Include risk assessment and prognosis analysis
+3. List specific precautions and lifestyle recommendations
+4. Explain the treatment rationale in layman's terms
+5. Include potential side effects of prescribed medications
+6. Provide emergency warning signs to watch for
+7. Suggest dietary and exercise recommendations
+8. Format the response with clear sections and bullet points
+9. Keep the language professional yet patient-friendly
+
+MEDICAL REPORT DATA:
+{reportContext}
+
+Please generate a comprehensive medical analysis:";
+
+                var generatedReport = await _geminiService.GenerateContentAsync(prompt);
+
+                if (string.IsNullOrEmpty(generatedReport))
+                {
+                    return StatusCode(500, new { Success = false, Message = "Failed to generate comprehensive report" });
+                }
+
+                return Ok(new { 
+                    Success = true, 
+                    OriginalReport = report, 
+                    ComprehensiveAnalysis = generatedReport 
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpGet("patient/{patientId}")]
+        public async Task<IActionResult> GetPatientReports(int patientId)
+        {
+            try
+            {
+                var reports = await _reportService.GetPatientReports(patientId);
+                return Ok(new { Success = true, Reports = reports });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpGet("{reportId}")]
+        public async Task<IActionResult> GetReport(string reportId)
+        {
+            try
+            {
+                var report = await _reportService.GetReportById(reportId);
+                if (report == null)
+                {
+                    return NotFound(new { Success = false, Message = "Report not found" });
+                }
+                return Ok(new { Success = true, Report = report });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpPut("{reportId}")]
+        public async Task<IActionResult> UpdateReport(string reportId, [FromBody] DoctorReportInput input)
+        {
+            try
+            {
+                var success = await _reportService.UpdateReport(reportId, input);
+                if (!success)
+                {
+                    return NotFound(new { Success = false, Message = "Report not found or update failed" });
+                }
+                return Ok(new { Success = true, Message = "Report updated successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+
+        [HttpDelete("{reportId}")]
+        public async Task<IActionResult> DeleteReport(string reportId)
+        {
+            try
+            {
+                var success = await _reportService.DeleteReport(reportId);
+                if (!success)
+                {
+                    return NotFound(new { Success = false, Message = "Report not found" });
+                }
+                return Ok(new { Success = true, Message = "Report deleted successfully" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Success = false, Message = ex.Message });
+            }
+        }
+    }
+}
+5. Controllers/ReportRagController.cs
+csharp
+using Microsoft.AspNetCore.Mvc;
+
+namespace ReportService.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    public class ReportRagController : ControllerBase
+    {
+        [HttpGet]
+        public IActionResult Get()
+        {
+            return Ok(new { Message = "RAG endpoint placeholder - Future enhancement for Retrieval Augmented Generation" });
+        }
+    }
+}
+6. Middleware/ApiKeyMiddleware.cs
+csharp
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using System.Threading.Tasks;
+
+namespace ReportService.Middleware;
+
+public class ApiKeyMiddleware
+{
+    private readonly RequestDelegate _next;
+    private const string APIKEYHEADER = "X-API-Key";
+    private readonly string _validApiKey;
+
+    public ApiKeyMiddleware(RequestDelegate next, IConfiguration configuration)
+    {
+        _next = next;
+        _validApiKey = configuration["ApiKey"] ?? "AIzaSyDqGXx0YjHb5qbe6r_lfNzr05iFICEPKOk";
+    }
+
+    public async Task InvokeAsync(HttpContext context)
+    {
+        // Skip API key check for health checks and swagger
+        if (context.Request.Path.StartsWithSegments("/health") || 
+            context.Request.Path.StartsWithSegments("/swagger"))
+        {
+            await _next(context);
+            return;
+        }
+
+        if (!context.Request.Headers.TryGetValue(APIKEYHEADER, out var extractedApiKey))
+        {
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsync("API Key was not provided. Use X-API-Key header.");
+            return;
+        }
+
+        if (!_validApiKey.Equals(extractedApiKey))
+        {
+            context.Response.StatusCode = 403;
+            await context.Response.WriteAsync("Unauthorized client. Invalid API Key.");
+            return;
+        }
+
+        await _next(context);
+    }
+}
+7. Models/GeminiSettings.cs
+csharp
+namespace ReportService.Models
+{
+    public class GeminiSettings
+    {
+        public string ApiKey { get; set; }
+        public string ModelName { get; set; }
+    }
+}
+8. Models/MongoDBSettings.cs
+csharp
+namespace ReportService.Models
+{
+    public class MongoDBSettings
+    {
+        public string ConnectionString { get; set; }
+        public string Database { get; set; }
+    }
+}
+9. Models/PatientAppointmentReport.cs
+csharp
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization.Attributes;
+
+namespace ReportService.Models
+{
+    public class PatientAppointmentReport
+    {
+        [BsonId]
+        [BsonRepresentation(BsonType.ObjectId)]
+        public string Id { get; set; }
+
+        // Patient Info
+        public int PatientId { get; set; }
+        public string PatientName { get; set; }
+        public DateTime PatientDOB { get; set; }
+        public string Gender { get; set; }
+        public string ContactNumber { get; set; }
+        public string Address { get; set; }
+
+        // Vital Signs
+        public string BloodPressure { get; set; }
+        public string HeartRate { get; set; }
+        public string Temperature { get; set; }
+        public string RespiratoryRate { get; set; }
+        public string OxygenSaturation { get; set; }
+
+        // Appointment Info
+        public int AppointmentId { get; set; }
+        public DateTime AppointmentDate { get; set; }
+        public string TimeSlot { get; set; }
+        public string AppointmentStatus { get; set; }
+
+        // Doctor Info
+        public int DoctorId { get; set; }
+        public string DoctorName { get; set; }
+        public string DoctorSpecialization { get; set; }
+        public string DoctorSignature { get; set; }
+
+        // Medical History
+        public string ChiefComplaint { get; set; }
+        public string HistoryOfPresentIllness { get; set; }
+        public string PastMedicalHistory { get; set; }
+        public string Allergies { get; set; }
+        public string CurrentMedications { get; set; }
+
+        // Examination Findings
+        public string PhysicalExamination { get; set; }
+        public string LaboratoryFindings { get; set; }
+        public string ImagingResults { get; set; }
+
+        // Diagnosis & Treatment
+        public string Diagnosis { get; set; }
+        public string DifferentialDiagnosis { get; set; }
+        public string TreatmentPlan { get; set; }
+        public string TreatmentNotes { get; set; }
+        public string Prescriptions { get; set; }
+        public string DosageInstructions { get; set; }
+
+        // Follow-up
+        public string FollowUpInstructions { get; set; }
+        public DateTime NextAppointmentDate { get; set; }
+        public string EmergencyInstructions { get; set; }
+
+        // Report Metadata
+        public DateTime ReportGeneratedAt { get; set; }
+        public string GeneratedBy { get; set; }
+        public string ReportStatus { get; set; }
+
+        // Additional notes
+        public string AdditionalNotes { get; set; }
+
+        public PatientAppointmentReport()
+        {
+            ReportGeneratedAt = DateTime.UtcNow;
+            ReportStatus = "Draft";
+        }
+    }
+}
+10. Models/DoctorReportInput.cs
+csharp
+namespace ReportService.Models
+{
+    public class DoctorReportInput
+    {
+        public int PatientId { get; set; }
+        public int AppointmentId { get; set; }
+        
+        // Vital Signs
+        public string BloodPressure { get; set; }
+        public string HeartRate { get; set; }
+        public string Temperature { get; set; }
+        public string RespiratoryRate { get; set; }
+        public string OxygenSaturation { get; set; }
+
+        // Medical Information
+        public string ChiefComplaint { get; set; }
+        public string HistoryOfPresentIllness { get; set; }
+        public string PhysicalExamination { get; set; }
+        public string LaboratoryFindings { get; set; }
+        public string ImagingResults { get; set; }
+        public string Diagnosis { get; set; }
+        public string TreatmentPlan { get; set; }
+        public string Prescriptions { get; set; }
+        public string DosageInstructions { get; set; }
+        public string FollowUpInstructions { get; set; }
+        public string AdditionalNotes { get; set; }
+    }
+}
+11. Services/GeminiService.cs
+csharp
+using GenerativeAI;
+using Microsoft.Extensions.Options;
+using ReportService.Models;
+
+namespace ReportService.Services
+{
+    public class GeminiService
+    {
+        private readonly GenerativeModel _geminiModel;
+
+        public GeminiService(IOptions<GeminiSettings> geminiSettings)
+        {
+            var apiKey = geminiSettings.Value.ApiKey;
+            var modelName = geminiSettings.Value.ModelName;
+
+            // Initialize the Gemini model
+            _geminiModel = new GenerativeModel(apiKey: apiKey, model: modelName);
+        }
+
+        public async Task<string> GenerateContentAsync(string prompt)
+        {
+            try
+            {
+                var response = await _geminiModel.GenerateContentAsync(prompt);
+                return response.Text;
+            }
+            catch (Exception ex)
+            {
+                // Log the exception for debugging
+                Console.WriteLine($"Gemini API call failed: {ex.Message}");
+                Console.WriteLine($"Stack Trace: {ex.StackTrace}");
+                return null;
+            }
+        }
+
+        public async Task<string> GenerateContentAsync(string prompt, double temperature = 0.7)
+        {
+            try
+            {
+                var response = await _geminiModel.GenerateContentAsync(prompt, new GenerationConfig 
+                { 
+                    Temperature = temperature 
+                });
+                return response.Text;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Gemini API call failed: {ex.Message}");
+                return null;
+            }
+        }
+    }
+}
+12. Services/PatientAppointmentReportService.cs
+csharp
+using ReportService.Models;
+using MongoDB.Driver;
+using Microsoft.Extensions.Options;
+
+namespace ReportService.Services
+{
+    public class PatientAppointmentReportService
+    {
+        private readonly IMongoCollection<PatientAppointmentReport> _reportsCollection;
+
+        public PatientAppointmentReportService(IOptions<MongoDBSettings> mongoDBSettings, IMongoClient mongoClient)
+        {
+            var database = mongoClient.GetDatabase(mongoDBSettings.Value.Database);
+            _reportsCollection = database.GetCollection<PatientAppointmentReport>("reports");
+        }
+
+        public async Task<PatientAppointmentReport> CreateReportFromDoctorInput(DoctorReportInput input, string doctorName, string doctorSpecialization, int doctorId)
+        {
+            var report = new PatientAppointmentReport
+            {
+                PatientId = input.PatientId,
+                PatientName = await GetPatientName(input.PatientId),
+                PatientDOB = await GetPatientDOB(input.PatientId),
+                Gender = await GetPatientGender(input.PatientId),
+                
+                // Vital Signs
+                BloodPressure = input.BloodPressure,
+                HeartRate = input.HeartRate,
+                Temperature = input.Temperature,
+                RespiratoryRate = input.RespiratoryRate,
+                OxygenSaturation = input.OxygenSaturation,
+
+                AppointmentId = input.AppointmentId,
+                AppointmentDate = DateTime.Now,
+                TimeSlot = "Not Specified",
+                AppointmentStatus = "Completed",
+
+                // Doctor Info
+                DoctorId = doctorId,
+                DoctorName = doctorName,
+                DoctorSpecialization = doctorSpecialization,
+                DoctorSignature = $"Digitally signed by {doctorName}",
+
+                // Medical Information
+                ChiefComplaint = input.ChiefComplaint,
+                HistoryOfPresentIllness = input.HistoryOfPresentIllness,
+                PhysicalExamination = input.PhysicalExamination,
+                LaboratoryFindings = input.LaboratoryFindings,
+                ImagingResults = input.ImagingResults,
+                Diagnosis = input.Diagnosis,
+                TreatmentPlan = input.TreatmentPlan,
+                TreatmentNotes = GenerateTreatmentNotes(input),
+                Prescriptions = input.Prescriptions,
+                DosageInstructions = input.DosageInstructions,
+                FollowUpInstructions = input.FollowUpInstructions,
+
+                // Metadata
+                GeneratedBy = doctorName,
+                ReportStatus = "Final",
+                AdditionalNotes = input.AdditionalNotes
+            };
+
+            await _reportsCollection.InsertOneAsync(report);
+            return report;
+        }
+
+        private string GenerateTreatmentNotes(DoctorReportInput input)
+        {
+            return $"Patient presented with {input.ChiefComplaint}. " +
+                   $"Examination revealed: {input.PhysicalExamination}. " +
+                   $"Diagnosis: {input.Diagnosis}. " +
+                   $"Treatment plan includes: {input.TreatmentPlan}. " +
+                   $"Prescribed: {input.Prescriptions} with instructions: {input.DosageInstructions}";
+        }
+
+        public async Task<List<PatientAppointmentReport>> GetPatientReports(int patientId)
+        {
+            return await _reportsCollection.Find(r => r.PatientId == patientId)
+                                          .SortByDescending(r => r.AppointmentDate)
+                                          .ToListAsync();
+        }
+
+        public async Task<PatientAppointmentReport> GetReportById(string reportId)
+        {
+            return await _reportsCollection.Find(r => r.Id == reportId).FirstOrDefaultAsync();
+        }
+
+        public async Task<bool> UpdateReport(string reportId, DoctorReportInput input)
+        {
+            var update = Builders<PatientAppointmentReport>.Update
+                .Set(r => r.BloodPressure, input.BloodPressure)
+                .Set(r => r.HeartRate, input.HeartRate)
+                .Set(r => r.Temperature, input.Temperature)
+                .Set(r => r.RespiratoryRate, input.RespiratoryRate)
+                .Set(r => r.OxygenSaturation, input.OxygenSaturation)
+                .Set(r => r.ChiefComplaint, input.ChiefComplaint)
+                .Set(r => r.HistoryOfPresentIllness, input.HistoryOfPresentIllness)
+                .Set(r => r.PhysicalExamination, input.PhysicalExamination)
+                .Set(r => r.LaboratoryFindings, input.LaboratoryFindings)
+                .Set(r => r.ImagingResults, input.ImagingResults)
+                .Set(r => r.Diagnosis, input.Diagnosis)
+                .Set(r => r.TreatmentPlan, input.TreatmentPlan)
+                .Set(r => r.Prescriptions, input.Prescriptions)
+                .Set(r => r.DosageInstructions, input.DosageInstructions)
+                .Set(r => r.FollowUpInstructions, input.FollowUpInstructions)
+                .Set(r => r.AdditionalNotes, input.AdditionalNotes)
+                .Set(r => r.TreatmentNotes, GenerateTreatmentNotes(input))
+                .Set(r => r.ReportGeneratedAt, DateTime.UtcNow);
+
+            var result = await _reportsCollection.UpdateOneAsync(
+                r => r.Id == reportId, 
+                update);
+
+            return result.ModifiedCount > 0;
+        }
+
+        public async Task<bool> DeleteReport(string reportId)
+        {
+            var result = await _reportsCollection.DeleteOneAsync(r => r.Id == reportId);
+            return result.DeletedCount > 0;
+        }
+
+        // Placeholder methods - integrate with your patient service
+        private async Task<string> GetPatientName(int patientId)
+        {
+            // Simulate API call to patient service
+            await Task.Delay(10);
+            return $"Patient {patientId}";
+        }
+
+        private async Task<DateTime> GetPatientDOB(int patientId)
+        {
+            await Task.Delay(10);
+            return DateTime.Now.AddYears(-30).AddDays(-patientId);
+        }
+
+        private async Task<string> GetPatientGender(int patientId)
+        {
+            await Task.Delay(10);
+            return patientId % 2 == 0 ? "Male" : "Female";
+        }
+    }
+}
+13. Properties/launchSettings.json
+json
+{
+  "$schema": "http://json.schemastore.org/launchsettings.json",
+  "iisSettings": {
+    "windowsAuthentication": false,
+    "anonymousAuthentication": true,
+    "iisExpress": {
+      "applicationUrl": "http://localhost:30972",
+      "sslPort": 44338
+    }
+  },
+  "profiles": {
+    "http": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "http://localhost:4006",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "https": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "applicationUrl": "https://localhost:7195;http://localhost:5022",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    },
+    "IIS Express": {
+      "commandName": "IISExpress",
+      "launchBrowser": true,
+      "launchUrl": "swagger",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      }
+    }
+  }
+}
+14. ReportService.csproj
+xml
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Consul" Version="1.7.14.1" />
+    <PackageReference Include="Google.AI.GenerativeAI" Version="2.2.0" />
+    <PackageReference Include="MongoDB.Driver" Version="2.25.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+  </ItemGroup>
+
+</Project>
