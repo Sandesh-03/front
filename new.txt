@@ -1,3 +1,100 @@
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { Router } from '@angular/router';
+import { HttpClient } from '@angular/common/http';
+import { User, LoginRequest, RegisterRequest } from '../models/user.model';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AuthService {
+  private apiUrl = 'http://localhost:3000/api/auth'; // adjust to your backend
+  private currentUserSubject = new BehaviorSubject<User | null>(null);
+  public currentUser$ = this.currentUserSubject.asObservable();
+
+  constructor(private http: HttpClient, private router: Router) {
+    const savedUser = localStorage.getItem('currentUser');
+    if (savedUser) {
+      this.currentUserSubject.next(JSON.parse(savedUser));
+    }
+  }
+
+  login(payload: LoginRequest): Observable<User> {
+    return new Observable(observer => {
+      this.http.post<User>(`${this.apiUrl}/login`, payload).subscribe({
+        next: (user) => {
+          // Ensure password is never stored
+          const safeUser: User = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            fullName: user.fullName,   // ✅ Store full name
+            phone: user.phone,
+            gender: user.gender,
+            dateOfBirth: user.dateOfBirth,
+            address: user.address,
+            specialization: user.specialization,
+            qualification: user.qualification,
+            experience: user.experience,
+            consultationFee: user.consultationFee,
+            department: user.department
+          };
+
+          localStorage.setItem('currentUser', JSON.stringify(safeUser));
+          this.currentUserSubject.next(safeUser);
+          observer.next(safeUser);
+          observer.complete();
+        },
+        error: (err) => observer.error(err)
+      });
+    });
+  }
+
+  register(payload: RegisterRequest): Observable<User> {
+    return new Observable(observer => {
+      this.http.post<User>(`${this.apiUrl}/register`, payload).subscribe({
+        next: (user) => {
+          // Store only safe user data
+          const safeUser: User = {
+            id: user.id,
+            email: user.email,
+            role: user.role,
+            fullName: user.fullName,   // ✅ Register includes fullName
+            phone: user.phone,
+            gender: user.gender,
+            dateOfBirth: user.dateOfBirth,
+            address: user.address,
+            specialization: user.specialization,
+            qualification: user.qualification,
+            experience: user.experience,
+            consultationFee: user.consultationFee,
+            department: user.department
+          };
+
+          localStorage.setItem('currentUser', JSON.stringify(safeUser));
+          this.currentUserSubject.next(safeUser);
+          observer.next(safeUser);
+          observer.complete();
+        },
+        error: (err) => observer.error(err)
+      });
+    });
+  }
+
+  logout(): void {
+    localStorage.removeItem('currentUser');
+    this.currentUserSubject.next(null);
+    this.router.navigate(['/login']);
+  }
+
+  getCurrentUser(): User | null {
+    return this.currentUserSubject.value;
+  }
+}
+
+
+
+
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule, Router } from '@angular/router';
