@@ -1,3 +1,55 @@
+
+// User model used across the Angular app
+export interface User {
+  id?: string;                // optional (comes from backend DB)
+  email: string;              // required
+  password: string;           // required
+  role: 'patient' | 'doctor'; // required
+  fullName: string;           // required
+  phone?: string;
+
+  // Patient-specific fields
+  gender?: string;
+  dateOfBirth?: Date | string;
+  address?: string;
+
+  // Doctor-specific fields
+  specialization?: string;
+  qualification?: string;
+  experience?: number;
+  consultationFee?: number;
+  department?: string;
+}
+
+// For login requests (only email + password needed)
+export interface LoginRequest {
+  email: string;
+  password: string;
+}
+
+// For register requests (everything except `id`)
+export interface RegisterRequest {
+  email: string;
+  password: string;
+  role: 'patient' | 'doctor';
+  fullName: string;
+  phone?: string;
+
+  // Patient-specific fields
+  gender?: string;
+  dateOfBirth?: Date | string;
+  address?: string;
+
+  // Doctor-specific fields
+  specialization?: string;
+  qualification?: string;
+  experience?: number;
+  consultationFee?: number;
+  department?: string;
+}
+
+
+
 src/services/auth.service.ts
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, of } from 'rxjs';
