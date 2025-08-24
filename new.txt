@@ -1,315 +1,8 @@
+📂 src/services/auth.service.ts
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable } from 'rxjs';
-import { Router } from '@angular/router';
 import { HttpClient } from '@angular/common/http';
-import { User, LoginRequest, RegisterRequest } from '../models/user.model';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AuthService {
-  private apiUrl = 'http://localhost:3000/api/auth'; // adjust to your backend
-  private currentUserSubject = new BehaviorSubject<User | null>(null);
-  public currentUser$ = this.currentUserSubject.asObservable();
-
-  constructor(private http: HttpClient, private router: Router) {
-    const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
-      this.currentUserSubject.next(JSON.parse(savedUser));
-    }
-  }
-
-  login(payload: LoginRequest): Observable<User> {
-    return new Observable(observer => {
-      this.http.post<User>(`${this.apiUrl}/login`, payload).subscribe({
-        next: (user) => {
-          // Ensure password is never stored
-          const safeUser: User = {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            fullName: user.fullName,   // ✅ Store full name
-            phone: user.phone,
-            gender: user.gender,
-            dateOfBirth: user.dateOfBirth,
-            address: user.address,
-            specialization: user.specialization,
-            qualification: user.qualification,
-            experience: user.experience,
-            consultationFee: user.consultationFee,
-            department: user.department
-          };
-
-          localStorage.setItem('currentUser', JSON.stringify(safeUser));
-          this.currentUserSubject.next(safeUser);
-          observer.next(safeUser);
-          observer.complete();
-        },
-        error: (err) => observer.error(err)
-      });
-    });
-  }
-
-  register(payload: RegisterRequest): Observable<User> {
-    return new Observable(observer => {
-      this.http.post<User>(`${this.apiUrl}/register`, payload).subscribe({
-        next: (user) => {
-          // Store only safe user data
-          const safeUser: User = {
-            id: user.id,
-            email: user.email,
-            role: user.role,
-            fullName: user.fullName,   // ✅ Register includes fullName
-            phone: user.phone,
-            gender: user.gender,
-            dateOfBirth: user.dateOfBirth,
-            address: user.address,
-            specialization: user.specialization,
-            qualification: user.qualification,
-            experience: user.experience,
-            consultationFee: user.consultationFee,
-            department: user.department
-          };
-
-          localStorage.setItem('currentUser', JSON.stringify(safeUser));
-          this.currentUserSubject.next(safeUser);
-          observer.next(safeUser);
-          observer.complete();
-        },
-        error: (err) => observer.error(err)
-      });
-    });
-  }
-
-  logout(): void {
-    localStorage.removeItem('currentUser');
-    this.currentUserSubject.next(null);
-    this.router.navigate(['/login']);
-  }
-
-  getCurrentUser(): User | null {
-    return this.currentUserSubject.value;
-  }
-}
-
-
-
-
-import { Component, OnInit } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { RouterModule, Router } from '@angular/router';
-import { AuthService } from '../../services/auth.service';
-import { User } from '../../models/user.model';
-import { FormsModule } from '@angular/forms';
-
-@Component({
-  selector: 'app-header',
-  standalone: true,
-  imports: [CommonModule, RouterModule, FormsModule],
-  template: `
-    <header class="header">
-      <nav class="navbar navbar-expand-lg">
-        <div class="container-fluid">
-          <a class="navbar-brand" routerLink="/">
-            <i class="bi bi-hospital me-2"></i>
-            HealthCare HMS
-          </a>
-          
-          <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-            <span class="navbar-toggler-icon"></span>
-          </button>
-          
-          <div class="collapse navbar-collapse" id="navbarNav">
-            <ul class="navbar-nav me-auto" *ngIf="currentUser">
-              <!-- Patient Navigation -->
-              <ng-container *ngIf="currentUser.role === 'patient'">
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/patient" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">
-                    <i class="bi bi-speedometer2 me-1"></i>Dashboard
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/patient/doctors" routerLinkActive="active">
-                    <i class="bi bi-person-badge me-1"></i>Find Doctors
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/patient/appointments" routerLinkActive="active">
-                    <i class="bi bi-calendar-check me-1"></i>My Appointments
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/patient/reports" routerLinkActive="active">
-                    <i class="bi bi-file-text me-1"></i>View Reports
-                  </a>
-                </li>
-              </ng-container>
-
-              <!-- Doctor Navigation -->
-              <ng-container *ngIf="currentUser.role === 'doctor'">
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/doctor" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">
-                    <i class="bi bi-speedometer2 me-1"></i>Dashboard
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/doctor/appointments" routerLinkActive="active">
-                    <i class="bi bi-calendar-check me-1"></i>Appointments
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/doctor/schedule" routerLinkActive="active">
-                    <i class="bi bi-calendar3 me-1"></i>Schedule
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/doctor/patients" routerLinkActive="active">
-                    <i class="bi bi-people me-1"></i>Patients
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/doctor/reports" routerLinkActive="active">
-                    <i class="bi bi-file-text me-1"></i>Reports
-                  </a>
-                </li>
-              </ng-container>
-
-              <!-- Admin Navigation -->
-              <ng-container *ngIf="currentUser.role === 'admin'">
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/admin" routerLinkActive="active" [routerLinkActiveOptions]="{exact: true}">
-                    <i class="bi bi-speedometer2 me-1"></i>Dashboard
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/admin/doctors" routerLinkActive="active">
-                    <i class="bi bi-person-badge me-1"></i>Doctors
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/admin/patients" routerLinkActive="active">
-                    <i class="bi bi-people me-1"></i>Patients
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/admin/appointments" routerLinkActive="active">
-                    <i class="bi bi-calendar-check me-1"></i>Appointments
-                  </a>
-                </li>
-                <li class="nav-item">
-                  <a class="nav-link" routerLink="/admin/reports" routerLinkActive="active">
-                    <i class="bi bi-graph-up me-1"></i>Reports
-                  </a>
-                </li>
-              </ng-container>
-            </ul>
-            
-            <ul class="navbar-nav" *ngIf="currentUser">
-              <li class="nav-item dropdown">
-                <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                  <i class="bi bi-person-circle me-1"></i>
-                  {{ getUserDisplayName() }}
-                </a>
-                <ul class="dropdown-menu dropdown-menu-end">
-                  <li><h6 class="dropdown-header">{{ currentUser.role | titlecase }} Panel</h6></li>
-                  <li><hr class="dropdown-divider"></li>
-                  <li><a class="dropdown-item" href="#" (click)="logout()">
-                    <i class="bi bi-box-arrow-right me-2"></i>Logout
-                  </a></li>
-                </ul>
-              </li>
-            </ul>
-          </div>
-        </div>
-      </nav>
-    </header>
-  `
-})
-export class HeaderComponent implements OnInit {
-  currentUser: User | null = null;
-
-  constructor(
-    private authService: AuthService,
-    private router: Router
-  ) {}
-
-  ngOnInit(): void {
-    this.authService.currentUser$.subscribe(user => {
-      this.currentUser = user;
-    });
-  }
-
-  getUserDisplayName(): string {
-    if (this.currentUser?.fullName) {
-      return this.currentUser.fullName;
-    }
-    return this.currentUser?.email || 'User';
-  }
-
-  logout(): void {
-    this.authService.logout();
-    this.router.navigate(['/login']);
-  }
-}
-
-
-
-
-// User model used across the Angular app
-export interface User {
-  id?: string;                // optional (comes from backend DB)
-  email: string;              // required
-  password: string;           // required
-  role: 'patient' | 'doctor'; // required
-  fullName: string;           // required
-  phone?: string;
-
-  // Patient-specific fields
-  gender?: string;
-  dateOfBirth?: Date | string;
-  address?: string;
-
-  // Doctor-specific fields
-  specialization?: string;
-  qualification?: string;
-  experience?: number;
-  consultationFee?: number;
-  department?: string;
-}
-
-// For login requests (only email + password needed)
-export interface LoginRequest {
-  email: string;
-  password: string;
-}
-
-// For register requests (everything except `id`)
-export interface RegisterRequest {
-  email: string;
-  password: string;
-  role: 'patient' | 'doctor';
-  fullName: string;
-  phone?: string;
-
-  // Patient-specific fields
-  gender?: string;
-  dateOfBirth?: Date | string;
-  address?: string;
-
-  // Doctor-specific fields
-  specialization?: string;
-  qualification?: string;
-  experience?: number;
-  consultationFee?: number;
-  department?: string;
-}
-
-
-
-src/services/auth.service.ts
-import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable, of } from 'rxjs';
-import { HttpClient } from '@angular/common/http';
+import { tap } from 'rxjs/operators';
 import { User } from '../models/user.model';
 
 interface AuthResponse {
@@ -323,18 +16,17 @@ export class AuthService {
   private currentUserSubject = new BehaviorSubject<User | null>(null);
   public currentUser$: Observable<User | null> = this.currentUserSubject.asObservable();
 
-  private authBaseUrl = 'http://localhost:4002/api/Auth';   // AuthController
-  // NOTE: Registering doctor/patient profiles is NOT exposed by your current DoctorService.
-  // PatientService POST /api/Patient is Admin-only. So registration here only calls Auth.
+  private authBaseUrl = 'http://localhost:4002/api/Auth';
 
   constructor(private http: HttpClient) {}
 
-  // --- Registration (Auth only) ---
-  register(profile: { email: string; password: string; role: 'Admin' | 'Doctor' | 'Patient' }) {
+  // --- Registration ---
+  register(profile: { email: string; password: string; role: 'Admin' | 'Doctor' | 'Patient'; fullName?: string }) {
     const body = {
       email: profile.email,
       password: profile.password,
-      role: profile.role
+      role: profile.role,
+      fullName: profile.fullName
     };
     return this.http.post(`${this.authBaseUrl}/register`, body);
   }
@@ -342,22 +34,32 @@ export class AuthService {
   // --- Login ---
   login(email: string, password: string) {
     const body = { email, password };
-    return this.http.post<AuthResponse>(`${this.authBaseUrl}/login`, body);
+    return this.http.post<AuthResponse>(`${this.authBaseUrl}/login`, body).pipe(
+      tap((res: AuthResponse) => {
+        localStorage.setItem('authToken', res.token);
+        this.setCurrentUserFromToken(res.token);
+      })
+    );
   }
 
-  // --- Logout / Session helpers ---
+  // --- Profile ---
+  getProfile(): Observable<User> {
+    return this.http.get<User>(`${this.authBaseUrl}/me`);
+  }
+
+  // --- Logout ---
   logout(): void {
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
     this.currentUserSubject.next(null);
   }
 
+  // --- Helpers ---
   isLoggedIn(): boolean {
     return !!localStorage.getItem('authToken');
   }
 
   getCurrentUser(): User | null {
-    // Prefer live BehaviorSubject; fallback to localStorage decode
     const live = this.currentUserSubject.value;
     if (live) return live;
 
@@ -371,17 +73,15 @@ export class AuthService {
 
   hasRole(role: string): boolean {
     const user = this.getCurrentUser();
-    if (!user) return false;
-    return user.role.toLowerCase() === role.toLowerCase();
+    return !!user && user.role.toLowerCase() === role.toLowerCase();
   }
 
-  // Build a User object from the JWT (AuthService adds NameIdentifier + Role)
+  // --- Decode JWT ---
   private decodeUserFromToken(token: string): User | null {
     try {
       const [, payloadB64] = token.split('.');
       const json = JSON.parse(atob(payloadB64));
 
-      // .NET ClaimTypes are usually full URIs; also check short keys just in case
       const ROLE_KEYS = [
         'role',
         'http://schemas.microsoft.com/ws/2008/06/identity/claims/role',
@@ -396,32 +96,22 @@ export class AuthService {
         'unique_name',
         'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'
       ];
+      const NAME_KEYS = ['fullName', 'name'];
 
       const role =
-        ROLE_KEYS.map(k => json[k]).find(v => !!v) ??
-        'Patient'; // default if missing
-
-      const idStr =
-        ID_KEYS.map(k => json[k]).find(v => !!v) ?? '0';
+        ROLE_KEYS.map(k => json[k]).find(v => !!v) ?? 'Patient';
+      const idStr = ID_KEYS.map(k => json[k]).find(v => !!v) ?? '0';
       const id = Number(idStr) || 0;
+      const email = EMAIL_KEYS.map(k => json[k]).find(v => !!v) ?? '';
+      const fullName = NAME_KEYS.map(k => json[k]).find(v => !!v) ?? '';
 
-      const email =
-        EMAIL_KEYS.map(k => json[k]).find(v => !!v) ?? '';
-
-      const user: User = {
-        id,
-        email,
-        role: role as User['role']
-      };
-
-      return user;
+      return { id, email, role: role as User['role'], fullName };
     } catch {
       return null;
     }
   }
 
-  // Expose a convenience for components after login to set the user
-  setCurrentUserFromToken(token: string): void {
+  private setCurrentUserFromToken(token: string): void {
     const user = this.decodeUserFromToken(token);
     if (user) {
       localStorage.setItem('currentUser', JSON.stringify(user));
@@ -430,375 +120,43 @@ export class AuthService {
   }
 }
 
-src/services/doctor.service.ts
+📂 src/services/auth.interceptor.ts
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { HttpInterceptor, HttpRequest, HttpHandler, HttpEvent } from '@angular/common/http';
 import { Observable } from 'rxjs';
 
-export interface Doctor {
-  id: number;
-  name: string;
-  specialty: string;
-  availabilities: Array<{
-    id: number;
-    day: number;        // DayOfWeek (0=Sunday .. 6=Saturday)
-    timeSlot: string;   // e.g. "09:00-10:00"
-  }>;
-}
+@Injectable()
+export class AuthInterceptor implements HttpInterceptor {
+  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
+    const token = localStorage.getItem('authToken');
 
-@Injectable({
-  providedIn: 'root'
-})
-export class DoctorService {
-  private readonly baseUrl = 'http://localhost:4004/api/Doctors';
-
-  constructor(private http: HttpClient) {}
-
-  private authHeaders(): HttpHeaders {
-    const token = localStorage.getItem('authToken') ?? '';
-    return new HttpHeaders({
-      Authorization: token ? `Bearer ${token}` : ''
-    });
-  }
-
-  // Admin-only per backend [Authorize(Roles="Admin")]
-  getAllDoctors(): Observable<Doctor[]> {
-    return this.http.get<Doctor[]>(`${this.baseUrl}`, { headers: this.authHeaders() });
-  }
-
-  // Admin-only
-  getDoctor(id: number): Observable<Doctor> {
-    return this.http.get<Doctor>(`${this.baseUrl}/${id}`, { headers: this.authHeaders() });
-  }
-
-  // Admin-only
-  deleteDoctor(id: number): Observable<void> {
-    return this.http.delete<void>(`${this.baseUrl}/${id}`, { headers: this.authHeaders() });
-  }
-}
-
-src/services/patient.service.ts
-import { Injectable } from '@angular/core';
-import { HttpClient, HttpHeaders } from '@angular/common/http';
-import { Observable } from 'rxjs';
-
-export interface MedicalHistory {
-  id?: number;
-  condition: string;
-  notes: string;
-}
-
-export interface Patient {
-  id?: number;
-  fullName: string;
-  gender: string;
-  dob: string; // ISO date string (maps to backend DateTime DOB)
-  medicalHistories?: MedicalHistory[];
-}
-
-@Injectable({
-  providedIn: 'root'
-})
-export class PatientService {
-  private readonly baseUrl = 'http://localhost:4005/api/Patient';
-
-  constructor(private http: HttpClient) {}
-
-  private authHeaders(): HttpHeaders {
-    const token = localStorage.getItem('authToken') ?? '';
-    return new HttpHeaders({
-      Authorization: token ? `Bearer ${token}` : ''
-    });
-  }
-
-  // Doctor,Admin
-  getAll(): Observable<Patient[]> {
-    return this.http.get<Patient[]>(`${this.baseUrl}`, { headers: this.authHeaders() });
-  }
-
-  // Doctor,Admin
-  get(id: number): Observable<Patient> {
-    return this.http.get<Patient>(`${this.baseUrl}/${id}`, { headers: this.authHeaders() });
-  }
-
-  // Admin-only (per backend)
-  add(patient: Patient): Observable<Patient> {
-    // Backend expects { FullName, Gender, DOB } – keys are PascalCase in C#; JSON serializer is case-insensitive, so this is OK.
-    const body = {
-      fullName: patient.fullName,
-      gender: patient.gender,
-      dob: patient.dob
-    };
-    return this.http.post<Patient>(`${this.baseUrl}`, body, { headers: this.authHeaders() });
-  }
-
-  // Admin-only
-  delete(id: number): Observable<void> {
-    return this.http.delete<void>(`${this.baseUrl}/${id}`, { headers: this.authHeaders() });
-  }
-}
-
-src/guards/auth.guard.ts
-import { Injectable } from '@angular/core';
-import { CanActivate, Router, ActivatedRouteSnapshot } from '@angular/router';
-import { AuthService } from '../services/auth.service';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class AuthGuard implements CanActivate {
-  constructor(private auth: AuthService, private router: Router) {}
-
-  canActivate(route: ActivatedRouteSnapshot): boolean {
-    if (!this.auth.isLoggedIn()) {
-      this.router.navigate(['/login']);
-      return false;
+    if (token) {
+      const authReq = req.clone({
+        setHeaders: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      return next.handle(authReq);
     }
 
-    const requiredRole = route.data?.['role'] as string | undefined;
-    if (!requiredRole) return true;
-
-    if (this.auth.hasRole(requiredRole)) return true;
-
-    this.router.navigate(['/unauthorized']);
-    return false;
+    return next.handle(req);
   }
 }
 
-src/models/user.model.ts
-// Keep this lean and aligned with JWT claims the backend issues.
-export type Role = 'Admin' | 'Doctor' | 'Patient';
+📂 src/app/app.module.ts
+import { NgModule } from '@angular/core';
+import { BrowserModule } from '@angular/platform-browser';
+import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
 
-export interface User {
-  id: number;
-  email: string; // not included in JWT today; may be empty string
-  role: Role;
-}
+import { AppComponent } from './app.component';
+import { AuthInterceptor } from './services/auth.interceptor';
 
-src/components/auth/login.component.ts
-import { Component } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
-import { Router, RouterModule } from '@angular/router';
-import { AuthService } from '../../services/auth.service';
-
-@Component({
-  selector: 'app-login',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterModule],
-  template: `
-    <div class="min-vh-100 d-flex align-items-center justify-content-center bg-light">
-      <div class="container">
-        <div class="row justify-content-center">
-          <div class="col-md-6 col-lg-4">
-            <div class="card shadow-lg border-0">
-              <div class="card-body p-5">
-                <div class="text-center mb-4">
-                  <h2 class="fw-bold text-primary">Healthcare System</h2>
-                  <p class="text-muted">Sign in to your account</p>
-                </div>
-
-                <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
-                  <div class="mb-3">
-                    <label for="email" class="form-label">Email</label>
-                    <input
-                      type="email"
-                      class="form-control"
-                      id="email"
-                      formControlName="email"
-                      [class.is-invalid]="loginForm.get('email')?.invalid && loginForm.get('email')?.touched"
-                      autocomplete="username"
-                      placeholder="Enter your email">
-                    <div class="invalid-feedback">Valid email is required</div>
-                  </div>
-
-                  <div class="mb-3">
-                    <label for="password" class="form-label">Password</label>
-                    <input
-                      type="password"
-                      class="form-control"
-                      id="password"
-                      formControlName="password"
-                      [class.is-invalid]="loginForm.get('password')?.invalid && loginForm.get('password')?.touched"
-                      autocomplete="current-password"
-                      placeholder="Enter your password">
-                    <div class="invalid-feedback">Password is required</div>
-                  </div>
-
-                  <div *ngIf="errorMessage" class="alert alert-danger">{{ errorMessage }}</div>
-
-                  <div class="d-grid">
-                    <button type="submit" class="btn btn-primary btn-lg" [disabled]="loginForm.invalid || isLoading">
-                      <span *ngIf="isLoading" class="spinner-border spinner-border-sm me-2"></span>
-                      Sign In
-                    </button>
-                  </div>
-                </form>
-
-                <div class="text-center mt-4">
-                  <p class="text-fant fw-semibold">
-                    Don't have an account?
-                    <a routerLink="/register" class="text-primary text-decoration-none fw-bold">Register</a>
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
+@NgModule({
+  declarations: [AppComponent],
+  imports: [BrowserModule, HttpClientModule],
+  providers: [
+    { provide: HTTP_INTERCEPTORS, useClass: AuthInterceptor, multi: true }
+  ],
+  bootstrap: [AppComponent]
 })
-export class LoginComponent {
-  loginForm: FormGroup;
-  errorMessage = '';
-  isLoading = false;
-
-  constructor(private fb: FormBuilder, private auth: AuthService, private router: Router) {
-    this.loginForm = this.fb.group({
-      email: ['', [Validators.required, Validators.email]],
-      password: ['', Validators.required]
-    });
-  }
-
-  onSubmit(): void {
-    if (this.loginForm.invalid) return;
-
-    this.isLoading = true;
-    this.errorMessage = '';
-
-    const { email, password } = this.loginForm.value;
-
-    this.auth.login(email, password).subscribe({
-      next: (res) => {
-        localStorage.setItem('authToken', res.token);
-        this.auth.setCurrentUserFromToken(res.token);
-
-        const user = this.auth.getCurrentUser();
-        const rolePath = user?.role ? user.role.toLowerCase() : 'patient';
-        this.isLoading = false;
-        this.router.navigate([`/${rolePath}`]);
-      },
-      error: () => {
-        this.isLoading = false;
-        this.errorMessage = 'Invalid email or password.';
-      }
-    });
-  }
-}
-
-src/components/auth/register.component.ts
-import { Component } from '@angular/core';
-import { CommonModule } from '@angular/common';
-import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
-import { Router, RouterModule } from '@angular/router';
-import { AuthService } from '../../services/auth.service';
-
-@Component({
-  selector: 'app-register',
-  standalone: true,
-  imports: [CommonModule, ReactiveFormsModule, RouterModule],
-  template: `
-    <div class="min-vh-100 d-flex align-items-center justify-content-center bg-light py-5">
-      <div class="container">
-        <div class="row justify-content-center">
-          <div class="col-md-8 col-lg-6">
-            <div class="card shadow-lg border-0">
-              <div class="card-body p-5">
-                <div class="text-center mb-4">
-                  <h2 class="fw-bold text-primary">Create Account</h2>
-                  <p class="text-muted">Join our healthcare system</p>
-                </div>
-
-                <form [formGroup]="registerForm" (ngSubmit)="onSubmit()">
-                  <div class="mb-3">
-                    <label class="form-label">Email</label>
-                    <input type="email" class="form-control" formControlName="email"
-                      [class.is-invalid]="registerForm.get('email')?.invalid && registerForm.get('email')?.touched" />
-                    <div class="invalid-feedback">Valid email is required</div>
-                  </div>
-
-                  <div class="mb-3">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-control" formControlName="password"
-                      [class.is-invalid]="registerForm.get('password')?.invalid && registerForm.get('password')?.touched" />
-                    <div class="invalid-feedback">Password must be at least 6 characters</div>
-                  </div>
-
-                  <div class="mb-3">
-                    <label class="form-label">Account Type</label>
-                    <select class="form-select" formControlName="role"
-                      [class.is-invalid]="registerForm.get('role')?.invalid && registerForm.get('role')?.touched">
-                      <option value="">Select account type</option>
-                      <option value="Patient">Patient</option>
-                      <option value="Doctor">Doctor</option>
-                      <option value="Admin">Admin</option>
-                    </select>
-                    <div class="invalid-feedback">Please select an account type</div>
-                  </div>
-
-                  <div *ngIf="errorMessage" class="alert alert-danger mt-3">{{ errorMessage }}</div>
-                  <div *ngIf="successMessage" class="alert alert-success mt-3">{{ successMessage }}</div>
-
-                  <div class="d-grid mt-4">
-                    <button type="submit" class="btn btn-primary btn-lg" [disabled]="registerForm.invalid || isLoading">
-                      <span *ngIf="isLoading" class="spinner-border spinner-border-sm me-2"></span>
-                      Create Account
-                    </button>
-                  </div>
-                </form>
-
-                <div class="text-center mt-4">
-                  <p class="text-fant fw-semibold">
-                    Already have an account?
-                    <a routerLink="/login" class="text-primary text-decoration-none fw-bold">Sign In</a>
-                  </p>
-                </div>
-
-                <p class="text-muted mt-3 mb-0" style="font-size: 0.9rem;">
-                  Note: Profile details for Doctors/Patients are managed via the respective services by users with proper roles.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  `
-})
-export class RegisterComponent {
-  registerForm: FormGroup;
-  errorMessage = '';
-  successMessage = '';
-  isLoading = false;
-
-  constructor(private fb: FormBuilder, private auth: AuthService, private router: Router) {
-    this.registerForm = this.fb.group({
-      email: ['', [Validators.required, Validators.email]],
-      password: ['', [Validators.required, Validators.minLength(6)]],
-      role: ['', Validators.required] // 'Admin' | 'Doctor' | 'Patient'
-    });
-  }
-
-  onSubmit(): void {
-    if (this.registerForm.invalid) return;
-
-    this.isLoading = true;
-    this.errorMessage = '';
-    this.successMessage = '';
-
-    const { email, password, role } = this.registerForm.value;
-
-    this.auth.register({ email, password, role }).subscribe({
-      next: () => {
-        this.isLoading = false;
-        this.successMessage = 'Registration successful. Redirecting to login...';
-        setTimeout(() => this.router.navigate(['/login']), 1200);
-      },
-      error: (err) => {
-        this.isLoading = false;
-        this.errorMessage = err?.error?.message || 'Registration failed. Please try again.';
-      }
-    });
-  }
-}
+export class AppModule {}
