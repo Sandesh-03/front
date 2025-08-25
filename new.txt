@@ -1,10 +1,112 @@
-1. Updated Auth Service (src/services/auth.service.ts)
+1. Create Data Service (src/services/data.service.ts)
+typescript
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { User, Appointment, Report, PatientProfile, DoctorProfile } from '../models/user.model';
+import { AuthService } from './auth.service';
+import { environment } from '../environments/environment';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class DataService {
+  private baseUrl = environment.apiUrl;
+
+  constructor(
+    private http: HttpClient,
+    private authService: AuthService
+  ) {}
+
+  private getAuthHeaders() {
+    const token = this.authService.getToken();
+    return {
+      headers: { 'Authorization': `Bearer ${token}` }
+    };
+  }
+
+  // User methods
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.baseUrl}/api/Users`, this.getAuthHeaders());
+  }
+
+  getUserById(id: number): Observable<User> {
+    return this.http.get<User>(`${this.baseUrl}/api/Users/${id}`, this.getAuthHeaders());
+  }
+
+  // Doctor methods
+  getDoctors(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.baseUrl}/api/Doctors`, this.getAuthHeaders());
+  }
+
+  getDoctorById(id: number): Observable<User> {
+    return this.http.get<User>(`${this.baseUrl}/api/Doctors/${id}`, this.getAuthHeaders());
+  }
+
+  // Patient methods
+  getPatients(): Observable<User[]> {
+    return this.http.get<User[]>(`${this.baseUrl}/api/Patients`, this.getAuthHeaders());
+  }
+
+  getPatientById(id: number): Observable<User> {
+    return this.http.get<User>(`${this.baseUrl}/api/Patients/${id}`, this.getAuthHeaders());
+  }
+
+  // Appointment methods
+  getAppointments(): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/api/Appointments`, this.getAuthHeaders());
+  }
+
+  getAppointmentsByPatient(patientId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/api/Appointments/patient/${patientId}`, this.getAuthHeaders());
+  }
+
+  getAppointmentsByDoctor(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/api/Appointments/doctor/${doctorId}`, this.getAuthHeaders());
+  }
+
+  createAppointment(appointmentData: any): Observable<any> {
+    return this.http.post(`${this.baseUrl}/api/Appointments`, appointmentData, this.getAuthHeaders());
+  }
+
+  updateAppointment(appointmentId: number, updateData: Partial<Appointment>): Observable<any> {
+    return this.http.put(`${this.baseUrl}/api/Appointments/${appointmentId}`, updateData, this.getAuthHeaders());
+  }
+
+  updateAppointmentStatus(appointmentId: number, status: string): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/api/Appointments/${appointmentId}/status`, { status }, this.getAuthHeaders());
+  }
+
+  // Report methods
+  getReports(): Observable<Report[]> {
+    return this.http.get<Report[]>(`${this.baseUrl}/api/Reports`, this.getAuthHeaders());
+  }
+
+  generateReport(type: string, userId: number, title: string, data: any): Observable<Report> {
+    return this.http.post<Report>(`${this.baseUrl}/api/Reports`, {
+      type,
+      userId,
+      title,
+      data
+    }, this.getAuthHeaders());
+  }
+
+  // Profile methods
+  updatePatientProfile(patientId: number, profile: PatientProfile): Observable<User> {
+    return this.http.put<User>(`${this.baseUrl}/api/Patients/${patientId}/profile`, profile, this.getAuthHeaders());
+  }
+
+  updateDoctorProfile(doctorId: number, profile: DoctorProfile): Observable<User> {
+    return this.http.put<User>(`${this.baseUrl}/api/Doctors/${doctorId}/profile`, profile, this.getAuthHeaders());
+  }
+}
+2. Updated Auth Service (src/services/auth.service.ts)
 typescript
 import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, tap } from 'rxjs';
 import { DoctorProfile, User } from '../models/user.model';
 import { HttpClient } from '@angular/common/http';
-import { environment } from '../../environments/environment';
+import { environment } from '../environments/environment';
 
 interface AuthResponse {
   token: string;
@@ -19,8 +121,6 @@ export class AuthService {
   public currentUser$: Observable<User | null> = this.currentUserSubject.asObservable();
 
   private authBaseUrl = `${environment.apiUrl}/api/Auth`;
-  private doctorBaseUrl = `${environment.doctorApiUrl}/api/Doctors`;
-  private patientBaseUrl = `${environment.patientApiUrl}/api/Patient`;
 
   constructor(private httpsvc: HttpClient) {
     this.loadStoredUser();
@@ -60,27 +160,6 @@ export class AuthService {
       password: profile.password, 
       role: profile.role 
     };
-
-    if (profile.role === "doctor") {
-      const doctor = {
-        Name: profile.fullname,
-        Specialty: profile.specialization,
-        qualification: profile.qualification,
-        experience: profile.experience,
-        phone: profile.phone,
-        consultationFee: profile.consultationFee
-      };
-      this.httpsvc.post(`${this.doctorBaseUrl}/AddDoctor`, doctor).subscribe();
-    } else if (profile.role === "patient") {
-      const patient = {
-        FullName: profile.fullname,
-        Gender: profile.gender,
-        DOB: profile.dateOfBirth,
-        phone: profile.phone,
-        address: profile.address
-      };
-      this.httpsvc.post(`${this.patientBaseUrl}`, patient).subscribe();
-    }
 
     return this.httpsvc.post(`${this.authBaseUrl}/register`, user);
   }
@@ -127,50 +206,15 @@ export class AuthService {
     });
   }
 }
-2. New Auth Interceptor (src/interceptors/auth.interceptor.ts)
-typescript
-import { Injectable } from '@angular/core';
-import {
-  HttpRequest,
-  HttpHandler,
-  HttpEvent,
-  HttpInterceptor
-} from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { AuthService } from '../services/auth.service';
-
-@Injectable()
-export class AuthInterceptor implements HttpInterceptor {
-  constructor(private authService: AuthService) {}
-
-  intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
-    const token = this.authService.getToken();
-    
-    if (token && !this.isAuthRequest(request.url)) {
-      request = request.clone({
-        setHeaders: {
-          Authorization: `Bearer ${token}`
-        }
-      });
-    }
-    
-    return next.handle(request);
-  }
-
-  private isAuthRequest(url: string): boolean {
-    return url.includes('/api/Auth/login') || url.includes('/api/Auth/register');
-  }
-}
 3. Updated Environment Files
 src/environments/environment.ts
 typescript
 export const environment = {
   production: false,
-  apiUrl: 'http://localhost:4002',
+  apiUrl: 'http://localhost:4002', // Your auth service port
   doctorApiUrl: 'http://localhost:4004',
   patientApiUrl: 'http://localhost:4005',
-  appointmentApiUrl: 'http://localhost:5131',
-  reportApiUrl: 'http://localhost:5000'
+  appointmentApiUrl: 'http://localhost:5131'
 };
 src/environments/environment.prod.ts
 typescript
@@ -179,286 +223,326 @@ export const environment = {
   apiUrl: 'https://your-production-domain.com/api',
   doctorApiUrl: 'https://your-production-domain.com/doctor-api',
   patientApiUrl: 'https://your-production-domain.com/patient-api',
-  appointmentApiUrl: 'https://your-production-domain.com/appointment-api',
-  reportApiUrl: 'https://your-production-domain.com/report-api'
+  appointmentApiUrl: 'https://your-production-domain.com/appointment-api'
 };
-4. Updated Doctor Service (src/services/doctor.service.ts)
+4. Updated Doctors List Component (src/components/patient/doctors-list.component.ts)
 typescript
-import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { Appointment, PatientAppointmentReport } from '../models/user.model';
-import { environment } from '../environments/environment';
-import { AuthService } from './auth.service';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class DoctorService {
-  private readonly baseUrl = `${environment.appointmentApiUrl}/api/Appointment`;
-
-  constructor(
-    private http: HttpClient,
-    private authService: AuthService
-  ) {}
-
-  private getAuthHeaders() {
-    const token = this.authService.getToken();
-    return {
-      headers: { 'Authorization': `Bearer ${token}` }
-    };
-  }
-
-  getPendingAppointments(doctorId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/pending`, this.getAuthHeaders());
-  }
-
-  getTodaysAcceptedAppointments(doctorId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/today`, this.getAuthHeaders());
-  }
-
-  getCompletedAppointments(doctorId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/completed`, this.getAuthHeaders());
-  }
-
-  getAcceptedAppointments(doctorId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/accepted`, this.getAuthHeaders());
-  }
-
-  getAllAppointments(doctorId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/all`, this.getAuthHeaders());
-  }
-
-  getAppointmentsByDate(doctorId: number, date: string): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/date?date=${date}`, this.getAuthHeaders());
-  }
-
-  getExhaustedSlots(doctorId: number, date: string): Observable<Appointment[]> {
-    return this.getAppointmentsByDate(doctorId, date);
-  }
-
-  generateReport(): void {
-    // Implementation for report generation
-  }
-
-  getAllReports(): Observable<PatientAppointmentReport[]> {
-    return this.http.get<PatientAppointmentReport[]>(`${environment.reportApiUrl}/api/Reports/all`, this.getAuthHeaders());
-  }
-
-  getReportByEmail(email: string): Observable<PatientAppointmentReport[]> {
-    return this.http.get<PatientAppointmentReport[]>(`${environment.reportApiUrl}/api/Reports/email/${email}`, this.getAuthHeaders());
-  }
-
-  updateAppointmentStatus(appointmentId: number, status: string): Observable<any> {
-    return this.http.patch(`${this.baseUrl}/appointments/${appointmentId}/status`, { status }, this.getAuthHeaders());
-  }
-
-  updateAppointment(appointmentId: number, updateData: Partial<Appointment>): Observable<any> {
-    return this.http.patch(`${this.baseUrl}/appointments/${appointmentId}`, updateData, this.getAuthHeaders());
-  }
-}
-5. Updated Patient Service (src/services/patient.service.ts)
-typescript
-import { Injectable } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable } from 'rxjs';
-import { Appointment } from '../models/user.model';
-import { environment } from '../environments/environment';
-import { AuthService } from './auth.service';
-
-@Injectable({
-  providedIn: 'root'
-})
-export class PatientService {
-  private readonly baseUrl = `${environment.appointmentApiUrl}/api/Appointment`;
-
-  constructor(
-    private http: HttpClient,
-    private authService: AuthService
-  ) {}
-
-  private getAuthHeaders() {
-    const token = this.authService.getToken();
-    return {
-      headers: { 'Authorization': `Bearer ${token}` }
-    };
-  }
-
-  getAllAppointments(): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(this.baseUrl, this.getAuthHeaders());
-  }
-
-  getApprovedUpcomingAppointments(patientId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/UpcomingApproved/${patientId}`, this.getAuthHeaders());
-  }
-
-  getPendingAppointments(patientId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/pending/${patientId}`, this.getAuthHeaders());
-  }
-
-  getCompletedAppointments(patientId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/completed/${patientId}`, this.getAuthHeaders());
-  }
-
-  getPastAppointments(patientId: number): Observable<Appointment[]> {
-    return this.http.get<Appointment[]>(`${this.baseUrl}/Past/${patientId}`, this.getAuthHeaders());
-  }
-}
-6. Updated App Module (src/app.module.ts)
-typescript
-import { NgModule } from '@angular/core';
-import { BrowserModule } from '@angular/platform-browser';
-import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
-import { AppRoutingModule } from './app-routing.module';
-
-import { AppComponent } from './app.component';
-import { HeaderComponent } from './components/shared/header.component';
-import { AuthInterceptor } from './interceptors/auth.interceptor';
-
-@NgModule({
-  declarations: [
-    AppComponent,
-    HeaderComponent
-    // ... other components
-  ],
-  imports: [
-    BrowserModule,
-    HttpClientModule,
-    AppRoutingModule
-  ],
-  providers: [
-    {
-      provide: HTTP_INTERCEPTORS,
-      useClass: AuthInterceptor,
-      multi: true
-    }
-  ],
-  bootstrap: [AppComponent]
-})
-export class AppModule { }
-7. Example Login Component (src/components/auth/login.component.ts)
-typescript
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
-import { Router } from '@angular/router';
+import { RouterModule } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
+import { User, DoctorProfile } from '../../models/user.model';
+import { FormsModule, NgForm } from '@angular/forms';
+import { DataService } from '../../services/data.service';
 
 @Component({
-  selector: 'app-login',
+  selector: 'app-doctors-list',
   standalone: true,
-  imports: [CommonModule, ReactiveFormsModule],
+  imports: [CommonModule, RouterModule, FormsModule],
   template: `
-    <div class="login-container">
-      <div class="card">
-        <div class="card-header">
-          <h3>Login</h3>
-        </div>
-        <div class="card-body">
-          <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
-            <div class="mb-3">
-              <label for="email" class="form-label">Email</label>
-              <input
-                type="email"
-                class="form-control"
-                id="email"
-                formControlName="email"
-                [class.is-invalid]="loginForm.get('email')?.invalid && loginForm.get('email')?.touched">
-              <div class="invalid-feedback" *ngIf="loginForm.get('email')?.errors?.['required']">
-                Email is required
-              </div>
-              <div class="invalid-feedback" *ngIf="loginForm.get('email')?.errors?.['email']">
-                Please enter a valid email
+    <div class="container-fluid">
+      <div class="row">
+        <!-- Sidebar -->
+        <nav class="col-md-3 col-lg-2 d-md-block bg-primary sidebar collapse">
+          <div class="position-sticky pt-3">
+            <div class="text-center text-white mb-4">
+              <h5>Patient Panel</h5>
+            </div>
+            <ul class="nav flex-column">
+              <li class="nav-item">
+                <a class="nav-link text-white" routerLink="/patient">
+                  <i class="bi bi-house-door me-2"></i>Dashboard
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link text-white" routerLink="/patient/doctors" routerLinkActive="active">
+                  <i class="bi bi-person-badge me-2"></i>Find Doctors
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link text-white" routerLink="/patient/appointments">
+                  <i class="bi bi-calendar-check me-2"></i>My Appointments
+                </a>
+              </li>
+              <li class="nav-item">
+                <a class="nav-link text-white" routerLink="/patient/history">
+                  <i class="bi bi-clock-history me-2"></i>Medical History
+                </a>
+              </li>
+              <li class="nav-item mt-3">
+                <a class="nav-link text-white" href="#" (click)="logout()">
+                  <i class="bi bi-box-arrow-right me-2"></i>Logout
+                </a>
+              </li>
+            </ul>
+          </div>
+        </nav>
+
+        <!-- Main content -->
+        <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+          <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <h1 class="h2">Find Doctors</h1>
+          </div>
+
+          <!-- Search and Filter -->
+          <div class="row mb-4">
+            <div class="col-md-6">
+              <input 
+                type="text" 
+                class="form-control" 
+                placeholder="Search by name or specialization..."
+                [(ngModel)]="searchTerm"
+                (input)="filterDoctors()">
+            </div>
+            <div class="col-md-4">
+              <select class="form-select" [(ngModel)]="specializationFilter" (change)="filterDoctors()">
+                <option value="">All Specializations</option>
+                <option *ngFor="let spec of specializations" [value]="spec">{{ spec }}</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Doctors Grid -->
+          <div class="row">
+            <div *ngFor="let doctor of filteredDoctors" class="col-md-6 col-lg-4 mb-4">
+              <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                  <div class="d-flex align-items-center mb-3">
+                    <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center me-3" 
+                         style="width: 50px; height: 50px;">
+                      <i class="bi bi-person-fill text-white fs-4"></i>
+                    </div>
+                    <div>
+                      <h5 class="card-title mb-1">Dr. {{ getDoctorProfile(doctor).fullName }}</h5>
+                      <small class="text-muted">{{ getDoctorProfile(doctor).specialization }}</small>
+                    </div>
+                  </div>
+                  
+                  <div class="mb-3">
+                    <p class="card-text">
+                      <strong>Qualification:</strong> {{ getDoctorProfile(doctor).qualification }}<br>
+                      <strong>Experience:</strong> {{ getDoctorProfile(doctor).experience }} years<br>
+                      <strong>Fee:</strong> ₹{{ getDoctorProfile(doctor).consultationFee }}<br>
+                      <strong>Phone:</strong> {{ getDoctorProfile(doctor).phone }}
+                    </p>
+                  </div>
+
+                  <div class="mb-3">
+                    <h6 class="text-primary">Available Days:</h6>
+                    <div class="d-flex flex-wrap gap-1">
+                      <span *ngFor="let slot of getDoctorProfile(doctor).availableSlots" 
+                            class="badge bg-secondary">{{ slot.day }}</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-footer bg-transparent">
+                  <button class="btn btn-primary w-100" (click)="openBookingModal(doctor)">
+                    Book Appointment
+                  </button>
+                </div>
               </div>
             </div>
+          </div>
 
-            <div class="mb-3">
-              <label for="password" class="form-label">Password</label>
-              <input
-                type="password"
-                class="form-control"
-                id="password"
-                formControlName="password"
-                [class.is-invalid]="loginForm.get('password')?.invalid && loginForm.get('password')?.touched">
-              <div class="invalid-feedback" *ngIf="loginForm.get('password')?.errors?.['required']">
-                Password is required
+          <div *ngIf="filteredDoctors.length === 0" class="text-center py-5">
+            <i class="bi bi-person-x fs-1 text-muted"></i>
+            <p class="text-muted mt-3">No doctors found matching your criteria.</p>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Booking Modal -->
+    <div class="modal fade" id="bookingModal" tabindex="-1">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <form *ngIf="selectedDoctor" #bookingForm="ngForm" (ngSubmit)="bookAppointment(bookingForm)">
+            <div class="modal-header">
+              <h5 class="modal-title">Book Appointment</h5>
+              <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+              <div class="mb-3">
+                <label class="form-label">Doctor</label>
+                <input type="text" class="form-control" 
+                       [value]="'Dr. ' + getDoctorProfile(selectedDoctor).fullName"
+                       readonly>
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label">Appointment Date</label>
+                <input type="date" class="form-control" name="appointmentDate" 
+                       [(ngModel)]="bookingData.appointmentDate" 
+                       [min]="getMinDate()" required>
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label">Appointment Time</label>
+                <select class="form-select" name="appointmentTime" 
+                        [(ngModel)]="bookingData.appointmentTime" required>
+                  <option value="">Select time</option>
+                  <option *ngFor="let time of availableTimes" [value]="time">{{ time }}</option>
+                </select>
+              </div>
+              
+              <div class="mb-3">
+                <label class="form-label">Symptoms/Reason for visit</label>
+                <textarea class="form-control" name="symptoms" 
+                          [(ngModel)]="bookingData.symptoms" 
+                          rows="3" required></textarea>
               </div>
             </div>
-
-            <div *ngIf="errorMessage" class="alert alert-danger">
-              {{ errorMessage }}
+            <div class="modal-footer">
+              <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+              <button type="submit" class="btn btn-primary" [disabled]="!bookingForm.form.valid">
+                Book Appointment
+              </button>
             </div>
-
-            <button type="submit" class="btn btn-primary w-100" [disabled]="loginForm.invalid || loading">
-              <span *ngIf="loading" class="spinner-border spinner-border-sm me-2"></span>
-              Login
-            </button>
           </form>
         </div>
       </div>
     </div>
-  `,
-  styles: [`
-    .login-container {
-      max-width: 400px;
-      margin: 100px auto;
-      padding: 20px;
-    }
-  `]
+  `
 })
-export class LoginComponent {
-  loginForm: FormGroup;
-  loading = false;
-  errorMessage = '';
+export class DoctorsListComponent implements OnInit {
+  doctors: User[] = [];
+  filteredDoctors: User[] = [];
+  specializations: string[] = [];
+  searchTerm = '';
+  specializationFilter = '';
+  selectedDoctor: User | null = null;
+  
+  bookingData = {
+    appointmentDate: '',
+    appointmentTime: '',
+    symptoms: ''
+  };
+
+  availableTimes = [
+    '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+    '12:00', '12:30', '14:00', '14:30', '15:00', '15:30',
+    '16:00', '16:30', '17:00', '17:30'
+  ];
 
   constructor(
-    private fb: FormBuilder,
-    private authService: AuthService,
-    private router: Router
-  ) {
-    this.loginForm = this.fb.group({
-      email: ['', [Validators.required, Validators.email]],
-      password: ['', Validators.required]
+    private dataService: DataService,
+    private authService: AuthService
+  ) {}
+
+  ngOnInit(): void {
+    this.loadDoctors();
+  }
+
+  loadDoctors(): void {
+    this.dataService.getDoctors().subscribe({
+      next: (doctors) => {
+        this.doctors = doctors;
+        this.filteredDoctors = [...this.doctors];
+        
+        // Extract unique specializations
+        this.specializations = [...new Set(
+          this.doctors.map(d => this.getDoctorProfile(d).specialization)
+        )];
+      },
+      error: (error) => {
+        console.error('Error loading doctors:', error);
+        alert('Failed to load doctors. Please try again.');
+      }
     });
   }
 
-  onSubmit(): void {
-    if (this.loginForm.valid) {
-      this.loading = true;
-      this.errorMessage = '';
+  filterDoctors(): void {
+    this.filteredDoctors = this.doctors.filter(doctor => {
+      const profile = this.getDoctorProfile(doctor);
+      const lowerSearch = this.searchTerm.toLowerCase();
+      const matchesSearch = !this.searchTerm || 
+        profile.fullName.toLowerCase().includes(lowerSearch) ||
+        profile.specialization.toLowerCase().includes(lowerSearch);
+      
+      const matchesSpecialization = !this.specializationFilter || 
+        profile.specialization === this.specializationFilter;
+      
+      return matchesSearch && matchesSpecialization;
+    });
+  }
 
-      const { email, password } = this.loginForm.value;
+  getDoctorProfile(doctor: User): DoctorProfile {
+    return doctor.profile as DoctorProfile;
+  }
 
-      this.authService.login(email, password).subscribe({
-        next: (response) => {
-          this.loading = false;
-          this.navigateBasedOnRole();
+  openBookingModal(doctor: User): void {
+    this.selectedDoctor = doctor;
+    this.bookingData = {
+      appointmentDate: '',
+      appointmentTime: '',
+      symptoms: ''
+    };
+    
+    // Show modal using Bootstrap
+    const modal = new (window as any).bootstrap.Modal(document.getElementById('bookingModal'));
+    modal.show();
+  }
+
+  getMinDate(): string {
+    const today = new Date();
+    return today.toISOString().split('T')[0];
+  }
+
+  bookAppointment(form: NgForm): void {
+    if (form.valid && this.selectedDoctor) {
+      const currentUser = this.authService.getCurrentUser();
+      if (!currentUser) return;
+
+      const appointmentData = {
+        patientId: currentUser.id,
+        doctorId: this.selectedDoctor.id,
+        date: this.bookingData.appointmentDate,
+        timeSlot: this.bookingData.appointmentTime,
+        reason: this.bookingData.symptoms,
+        status: 'Pending'
+      };
+
+      this.dataService.createAppointment(appointmentData).subscribe({
+        next: (result) => {
+          alert('Appointment booked successfully!');
+          // Close modal
+          const modal = (window as any).bootstrap.Modal.getInstance(document.getElementById('bookingModal'));
+          modal.hide();
         },
         error: (error) => {
-          this.loading = false;
-          this.errorMessage = error.error?.message || 'Login failed. Please check your credentials.';
-          console.error('Login error:', error);
+          alert('Error booking appointment: ' + error.message);
         }
       });
     }
   }
 
-  private navigateBasedOnRole(): void {
-    const user = this.authService.getCurrentUser();
-    if (user) {
-      switch (user.role) {
-        case 'patient':
-          this.router.navigate(['/patient']);
-          break;
-        case 'doctor':
-          this.router.navigate(['/doctor']);
-          break;
-        case 'admin':
-          this.router.navigate(['/admin']);
-          break;
-        default:
-          this.router.navigate(['/']);
+  logout(): void {
+    this.authService.logout();
+  }
+}
+5. Updated Auth Guard (src/guards/auth.guard.ts)
+typescript
+import { Injectable } from '@angular/core';
+import { CanActivate, Router, ActivatedRouteSnapshot } from '@angular/router';
+import { AuthService } from '../services/auth.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class AuthGuard implements CanActivate {
+  constructor(private authService: AuthService, private router: Router) {}
+
+  canActivate(route: ActivatedRouteSnapshot): boolean {
+    if (this.authService.isLoggedIn()) {
+      const requiredRole = route.data?.['role'];
+      if (requiredRole && !this.authService.hasRole(requiredRole)) {
+        this.router.navigate(['/unauthorized']);
+        return false;
       }
+      return true;
     }
+    
+    this.router.navigate(['/login']);
+    return false;
   }
 }
