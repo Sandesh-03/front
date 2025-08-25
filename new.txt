@@ -1,12 +1,14 @@
-📂 src/services/auth.service.ts
+1. Updated Auth Service (src/services/auth.service.ts)
+typescript
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, Observable } from 'rxjs';
+import { BehaviorSubject, Observable, tap } from 'rxjs';
+import { DoctorProfile, User } from '../models/user.model';
 import { HttpClient } from '@angular/common/http';
-import { tap } from 'rxjs/operators';
-import { User } from '../models/user.model';
+import { environment } from '../../environments/environment';
 
 interface AuthResponse {
   token: string;
+  user?: User;
 }
 
 @Injectable({
@@ -16,147 +18,447 @@ export class AuthService {
   private currentUserSubject = new BehaviorSubject<User | null>(null);
   public currentUser$: Observable<User | null> = this.currentUserSubject.asObservable();
 
-  private authBaseUrl = 'http://localhost:4002/api/Auth';
+  private authBaseUrl = `${environment.apiUrl}/api/Auth`;
+  private doctorBaseUrl = `${environment.doctorApiUrl}/api/Doctors`;
+  private patientBaseUrl = `${environment.patientApiUrl}/api/Patient`;
 
-  constructor(private http: HttpClient) {}
-
-  // --- Registration ---
-  register(profile: { email: string; password: string; role: 'Admin' | 'Doctor' | 'Patient'; fullName?: string }) {
-    const body = {
-      email: profile.email,
-      password: profile.password,
-      role: profile.role,
-      fullName: profile.fullName
-    };
-    return this.http.post(`${this.authBaseUrl}/register`, body);
+  constructor(private httpsvc: HttpClient) {
+    this.loadStoredUser();
   }
 
-  // --- Login ---
-  login(email: string, password: string) {
-    const body = { email, password };
-    return this.http.post<AuthResponse>(`${this.authBaseUrl}/login`, body).pipe(
-      tap((res: AuthResponse) => {
-        localStorage.setItem('authToken', res.token);
-        this.setCurrentUserFromToken(res.token);
+  private loadStoredUser(): void {
+    const storedUser = localStorage.getItem('currentUser');
+    if (storedUser) {
+      this.currentUserSubject.next(JSON.parse(storedUser));
+    }
+  }
+
+  login(email: string, password: string): Observable<AuthResponse> {
+    const credentials = { Email: email, password };
+    
+    return this.httpsvc.post<AuthResponse>(`${this.authBaseUrl}/login`, credentials).pipe(
+      tap(response => {
+        if (response.token) {
+          localStorage.setItem('authToken', response.token);
+          
+          if (response.user) {
+            this.setCurrentUser(response.user);
+          } else {
+            this.fetchCurrentUser().subscribe({
+              next: (user) => this.setCurrentUser(user),
+              error: (err) => console.error('Failed to fetch user:', err)
+            });
+          }
+        }
       })
     );
   }
 
-  // --- Profile ---
-  getProfile(): Observable<User> {
-    return this.http.get<User>(`${this.authBaseUrl}/me`);
+  register(profile: any): Observable<any> {
+    const user = { 
+      Email: profile.Email, 
+      password: profile.password, 
+      role: profile.role 
+    };
+
+    if (profile.role === "doctor") {
+      const doctor = {
+        Name: profile.fullname,
+        Specialty: profile.specialization,
+        qualification: profile.qualification,
+        experience: profile.experience,
+        phone: profile.phone,
+        consultationFee: profile.consultationFee
+      };
+      this.httpsvc.post(`${this.doctorBaseUrl}/AddDoctor`, doctor).subscribe();
+    } else if (profile.role === "patient") {
+      const patient = {
+        FullName: profile.fullname,
+        Gender: profile.gender,
+        DOB: profile.dateOfBirth,
+        phone: profile.phone,
+        address: profile.address
+      };
+      this.httpsvc.post(`${this.patientBaseUrl}`, patient).subscribe();
+    }
+
+    return this.httpsvc.post(`${this.authBaseUrl}/register`, user);
   }
 
-  // --- Logout ---
   logout(): void {
     localStorage.removeItem('authToken');
     localStorage.removeItem('currentUser');
     this.currentUserSubject.next(null);
   }
 
-  // --- Helpers ---
+  getCurrentUser(): User | null {
+    return this.currentUserSubject.value;
+  }
+
   isLoggedIn(): boolean {
     return !!localStorage.getItem('authToken');
   }
 
-  getCurrentUser(): User | null {
-    const live = this.currentUserSubject.value;
-    if (live) return live;
-
-    const token = localStorage.getItem('authToken');
-    if (!token) return null;
-
-    const user = this.decodeUserFromToken(token);
-    if (user) this.currentUserSubject.next(user);
-    return user;
-  }
-
   hasRole(role: string): boolean {
     const user = this.getCurrentUser();
-    return !!user && user.role.toLowerCase() === role.toLowerCase();
+    return user ? user.role === role : false;
   }
 
-  // --- Decode JWT ---
-  private decodeUserFromToken(token: string): User | null {
-    try {
-      const [, payloadB64] = token.split('.');
-      const json = JSON.parse(atob(payloadB64));
-
-      const ROLE_KEYS = [
-        'role',
-        'http://schemas.microsoft.com/ws/2008/06/identity/claims/role',
-        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/role'
-      ];
-      const ID_KEYS = [
-        'nameid',
-        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier'
-      ];
-      const EMAIL_KEYS = [
-        'email',
-        'unique_name',
-        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress'
-      ];
-      const NAME_KEYS = ['fullName', 'name'];
-
-      const role =
-        ROLE_KEYS.map(k => json[k]).find(v => !!v) ?? 'Patient';
-      const idStr = ID_KEYS.map(k => json[k]).find(v => !!v) ?? '0';
-      const id = Number(idStr) || 0;
-      const email = EMAIL_KEYS.map(k => json[k]).find(v => !!v) ?? '';
-      const fullName = NAME_KEYS.map(k => json[k]).find(v => !!v) ?? '';
-
-      return { id, email, role: role as User['role'], fullName };
-    } catch {
-      return null;
-    }
+  fetchCurrentUser(): Observable<User> {
+    const token = this.getToken();
+    return this.httpsvc.get<User>(`${this.authBaseUrl}/me`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
   }
 
-  private setCurrentUserFromToken(token: string): void {
-    const user = this.decodeUserFromToken(token);
-    if (user) {
-      localStorage.setItem('currentUser', JSON.stringify(user));
-      this.currentUserSubject.next(user);
-    }
+  setCurrentUser(user: User): void {
+    localStorage.setItem('currentUser', JSON.stringify(user));
+    this.currentUserSubject.next(user);
+  }
+
+  getToken(): string | null {
+    return localStorage.getItem('authToken');
+  }
+
+  updateUserProfile(userId: string, profile: DoctorProfile): Observable<User> {
+    const token = this.getToken();
+    return this.httpsvc.put<User>(`${this.authBaseUrl}/users/${userId}/profile`, profile, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
   }
 }
-
-📂 src/services/auth.interceptor.ts
+2. New Auth Interceptor (src/interceptors/auth.interceptor.ts)
+typescript
 import { Injectable } from '@angular/core';
-import { HttpInterceptor, HttpRequest, HttpHandler, HttpEvent } from '@angular/common/http';
+import {
+  HttpRequest,
+  HttpHandler,
+  HttpEvent,
+  HttpInterceptor
+} from '@angular/common/http';
 import { Observable } from 'rxjs';
+import { AuthService } from '../services/auth.service';
 
 @Injectable()
 export class AuthInterceptor implements HttpInterceptor {
-  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
-    const token = localStorage.getItem('authToken');
+  constructor(private authService: AuthService) {}
 
-    if (token) {
-      const authReq = req.clone({
+  intercept(request: HttpRequest<unknown>, next: HttpHandler): Observable<HttpEvent<unknown>> {
+    const token = this.authService.getToken();
+    
+    if (token && !this.isAuthRequest(request.url)) {
+      request = request.clone({
         setHeaders: {
           Authorization: `Bearer ${token}`
         }
       });
-      return next.handle(authReq);
     }
+    
+    return next.handle(request);
+  }
 
-    return next.handle(req);
+  private isAuthRequest(url: string): boolean {
+    return url.includes('/api/Auth/login') || url.includes('/api/Auth/register');
   }
 }
+3. Updated Environment Files
+src/environments/environment.ts
+typescript
+export const environment = {
+  production: false,
+  apiUrl: 'http://localhost:4002',
+  doctorApiUrl: 'http://localhost:4004',
+  patientApiUrl: 'http://localhost:4005',
+  appointmentApiUrl: 'http://localhost:5131',
+  reportApiUrl: 'http://localhost:5000'
+};
+src/environments/environment.prod.ts
+typescript
+export const environment = {
+  production: true,
+  apiUrl: 'https://your-production-domain.com/api',
+  doctorApiUrl: 'https://your-production-domain.com/doctor-api',
+  patientApiUrl: 'https://your-production-domain.com/patient-api',
+  appointmentApiUrl: 'https://your-production-domain.com/appointment-api',
+  reportApiUrl: 'https://your-production-domain.com/report-api'
+};
+4. Updated Doctor Service (src/services/doctor.service.ts)
+typescript
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { Appointment, PatientAppointmentReport } from '../models/user.model';
+import { environment } from '../environments/environment';
+import { AuthService } from './auth.service';
 
-📂 src/app/app.module.ts
+@Injectable({
+  providedIn: 'root'
+})
+export class DoctorService {
+  private readonly baseUrl = `${environment.appointmentApiUrl}/api/Appointment`;
+
+  constructor(
+    private http: HttpClient,
+    private authService: AuthService
+  ) {}
+
+  private getAuthHeaders() {
+    const token = this.authService.getToken();
+    return {
+      headers: { 'Authorization': `Bearer ${token}` }
+    };
+  }
+
+  getPendingAppointments(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/pending`, this.getAuthHeaders());
+  }
+
+  getTodaysAcceptedAppointments(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/today`, this.getAuthHeaders());
+  }
+
+  getCompletedAppointments(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/completed`, this.getAuthHeaders());
+  }
+
+  getAcceptedAppointments(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/accepted`, this.getAuthHeaders());
+  }
+
+  getAllAppointments(doctorId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/all`, this.getAuthHeaders());
+  }
+
+  getAppointmentsByDate(doctorId: number, date: string): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/doctor/${doctorId}/date?date=${date}`, this.getAuthHeaders());
+  }
+
+  getExhaustedSlots(doctorId: number, date: string): Observable<Appointment[]> {
+    return this.getAppointmentsByDate(doctorId, date);
+  }
+
+  generateReport(): void {
+    // Implementation for report generation
+  }
+
+  getAllReports(): Observable<PatientAppointmentReport[]> {
+    return this.http.get<PatientAppointmentReport[]>(`${environment.reportApiUrl}/api/Reports/all`, this.getAuthHeaders());
+  }
+
+  getReportByEmail(email: string): Observable<PatientAppointmentReport[]> {
+    return this.http.get<PatientAppointmentReport[]>(`${environment.reportApiUrl}/api/Reports/email/${email}`, this.getAuthHeaders());
+  }
+
+  updateAppointmentStatus(appointmentId: number, status: string): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/appointments/${appointmentId}/status`, { status }, this.getAuthHeaders());
+  }
+
+  updateAppointment(appointmentId: number, updateData: Partial<Appointment>): Observable<any> {
+    return this.http.patch(`${this.baseUrl}/appointments/${appointmentId}`, updateData, this.getAuthHeaders());
+  }
+}
+5. Updated Patient Service (src/services/patient.service.ts)
+typescript
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import { Appointment } from '../models/user.model';
+import { environment } from '../environments/environment';
+import { AuthService } from './auth.service';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class PatientService {
+  private readonly baseUrl = `${environment.appointmentApiUrl}/api/Appointment`;
+
+  constructor(
+    private http: HttpClient,
+    private authService: AuthService
+  ) {}
+
+  private getAuthHeaders() {
+    const token = this.authService.getToken();
+    return {
+      headers: { 'Authorization': `Bearer ${token}` }
+    };
+  }
+
+  getAllAppointments(): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(this.baseUrl, this.getAuthHeaders());
+  }
+
+  getApprovedUpcomingAppointments(patientId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/UpcomingApproved/${patientId}`, this.getAuthHeaders());
+  }
+
+  getPendingAppointments(patientId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/pending/${patientId}`, this.getAuthHeaders());
+  }
+
+  getCompletedAppointments(patientId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/completed/${patientId}`, this.getAuthHeaders());
+  }
+
+  getPastAppointments(patientId: number): Observable<Appointment[]> {
+    return this.http.get<Appointment[]>(`${this.baseUrl}/Past/${patientId}`, this.getAuthHeaders());
+  }
+}
+6. Updated App Module (src/app.module.ts)
+typescript
 import { NgModule } from '@angular/core';
 import { BrowserModule } from '@angular/platform-browser';
 import { HttpClientModule, HTTP_INTERCEPTORS } from '@angular/common/http';
+import { AppRoutingModule } from './app-routing.module';
 
 import { AppComponent } from './app.component';
-import { AuthInterceptor } from './services/auth.interceptor';
+import { HeaderComponent } from './components/shared/header.component';
+import { AuthInterceptor } from './interceptors/auth.interceptor';
 
 @NgModule({
-  declarations: [AppComponent],
-  imports: [BrowserModule, HttpClientModule],
+  declarations: [
+    AppComponent,
+    HeaderComponent
+    // ... other components
+  ],
+  imports: [
+    BrowserModule,
+    HttpClientModule,
+    AppRoutingModule
+  ],
   providers: [
-    { provide: HTTP_INTERCEPTORS, useClass: AuthInterceptor, multi: true }
+    {
+      provide: HTTP_INTERCEPTORS,
+      useClass: AuthInterceptor,
+      multi: true
+    }
   ],
   bootstrap: [AppComponent]
 })
-export class AppModule {}
+export class AppModule { }
+7. Example Login Component (src/components/auth/login.component.ts)
+typescript
+import { Component } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { ReactiveFormsModule, FormBuilder, FormGroup, Validators } from '@angular/forms';
+import { Router } from '@angular/router';
+import { AuthService } from '../../services/auth.service';
+
+@Component({
+  selector: 'app-login',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule],
+  template: `
+    <div class="login-container">
+      <div class="card">
+        <div class="card-header">
+          <h3>Login</h3>
+        </div>
+        <div class="card-body">
+          <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
+            <div class="mb-3">
+              <label for="email" class="form-label">Email</label>
+              <input
+                type="email"
+                class="form-control"
+                id="email"
+                formControlName="email"
+                [class.is-invalid]="loginForm.get('email')?.invalid && loginForm.get('email')?.touched">
+              <div class="invalid-feedback" *ngIf="loginForm.get('email')?.errors?.['required']">
+                Email is required
+              </div>
+              <div class="invalid-feedback" *ngIf="loginForm.get('email')?.errors?.['email']">
+                Please enter a valid email
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <label for="password" class="form-label">Password</label>
+              <input
+                type="password"
+                class="form-control"
+                id="password"
+                formControlName="password"
+                [class.is-invalid]="loginForm.get('password')?.invalid && loginForm.get('password')?.touched">
+              <div class="invalid-feedback" *ngIf="loginForm.get('password')?.errors?.['required']">
+                Password is required
+              </div>
+            </div>
+
+            <div *ngIf="errorMessage" class="alert alert-danger">
+              {{ errorMessage }}
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100" [disabled]="loginForm.invalid || loading">
+              <span *ngIf="loading" class="spinner-border spinner-border-sm me-2"></span>
+              Login
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  `,
+  styles: [`
+    .login-container {
+      max-width: 400px;
+      margin: 100px auto;
+      padding: 20px;
+    }
+  `]
+})
+export class LoginComponent {
+  loginForm: FormGroup;
+  loading = false;
+  errorMessage = '';
+
+  constructor(
+    private fb: FormBuilder,
+    private authService: AuthService,
+    private router: Router
+  ) {
+    this.loginForm = this.fb.group({
+      email: ['', [Validators.required, Validators.email]],
+      password: ['', Validators.required]
+    });
+  }
+
+  onSubmit(): void {
+    if (this.loginForm.valid) {
+      this.loading = true;
+      this.errorMessage = '';
+
+      const { email, password } = this.loginForm.value;
+
+      this.authService.login(email, password).subscribe({
+        next: (response) => {
+          this.loading = false;
+          this.navigateBasedOnRole();
+        },
+        error: (error) => {
+          this.loading = false;
+          this.errorMessage = error.error?.message || 'Login failed. Please check your credentials.';
+          console.error('Login error:', error);
+        }
+      });
+    }
+  }
+
+  private navigateBasedOnRole(): void {
+    const user = this.authService.getCurrentUser();
+    if (user) {
+      switch (user.role) {
+        case 'patient':
+          this.router.navigate(['/patient']);
+          break;
+        case 'doctor':
+          this.router.navigate(['/doctor']);
+          break;
+        case 'admin':
+          this.router.navigate(['/admin']);
+          break;
+        default:
+          this.router.navigate(['/']);
+      }
+    }
+  }
+}
